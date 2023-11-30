@@ -3,6 +3,7 @@ package panos
 import (
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/PaloAltoNetworks/pango/poli/pbf"
 	"github.com/PaloAltoNetworks/pango/util"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 // Data source (listing).
@@ -489,7 +490,6 @@ func pbfRuleGroupSchema(isResource bool, rmList []string) map[string]*schema.Sch
 							},
 						},
 					},
-					"audit_comment": auditCommentSchema(),
 				},
 			},
 		},
@@ -519,7 +519,7 @@ func loadPbfRules(d *schema.ResourceData) ([]pbf.Entry, map[string]string) {
 	list := make([]pbf.Entry, 0, len(rlist))
 	for i := range rlist {
 		b := rlist[i].(map[string]interface{})
-		auditComments[b["name"].(string)] = b["audit_comment"].(string)
+		auditComments[b["name"].(string)] = os.Getenv("PANOS_AUDIT_COMMENT")
 		o := pbf.Entry{
 			Name:                      b["name"].(string),
 			Description:               b["description"].(string),
@@ -584,7 +584,6 @@ func dumpPbfRule(o pbf.Entry) map[string]interface{} {
 		"group_tag":                    o.GroupTag,
 		"target":                       dumpTarget(o.Targets),
 		"negate_target":                o.NegateTarget,
-		"audit_comment":                "",
 	}
 
 	src := map[string]interface{}{

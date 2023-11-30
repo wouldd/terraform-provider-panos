@@ -1,16 +1,18 @@
 package panos
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/PaloAltoNetworks/pango"
-
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 // Provider returns a terraform.ResourceProvider.
-func Provider() terraform.ResourceProvider {
+func Provider() *schema.Provider {
 	return &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"hostname": {
@@ -37,7 +39,7 @@ func Provider() terraform.ResourceProvider {
 				Type:         schema.TypeString,
 				Optional:     true,
 				Description:  "The protocol (https or http)",
-				ValidateFunc: validateStringIn("https", "http", ""),
+				ValidateFunc: validation.StringInSlice([]string{"https", "http", ""}, false),
 			},
 			"port": {
 				Type:        schema.TypeInt,
@@ -376,14 +378,14 @@ func Provider() terraform.ResourceProvider {
 			"panos_security_policy_group": resourceSecurityRuleGroup(),
 		},
 
-		ConfigureFunc: providerConfigure,
+		ConfigureContextFunc: providerConfigure,
 	}
 }
 
-func providerConfigure(d *schema.ResourceData) (interface{}, error) {
+func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
 	var (
 		logging uint32
-		err     error
+		diags   diag.Diagnostics
 	)
 
 	lm := map[string]uint32{
@@ -415,13 +417,18 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		for i := range ll {
 			s := ll[i].(string)
 			if v, ok := lm[s]; !ok {
-				return nil, fmt.Errorf("Unknown logging artifact requested: %s", s)
+				diags = append(diags, diag.Diagnostic{
+					Severity: diag.Warning,
+					Summary:  fmt.Sprintf("Unknown logging artifact requested: %s", s),
+				})
+				return nil, diags
 			} else {
 				logging |= v
 			}
 		}
 	}
 
+	tflog.Info(ctx, "This is Dan's provider version")
 	con, err := pango.ConnectUsing(
 		pango.Client{
 			Hostname:          d.Get("hostname").(string),
@@ -439,9 +446,8 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		d.Get("json_config_file").(string),
 		true,
 	)
-
 	if err != nil {
-		return nil, err
+		return nil, diags
 	}
 
 	return con, nil

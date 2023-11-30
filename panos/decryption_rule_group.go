@@ -3,6 +3,7 @@ package panos
 import (
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/PaloAltoNetworks/pango/poli/decryption"
 	"github.com/PaloAltoNetworks/pango/util"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 // Data source (listing).
@@ -432,7 +433,6 @@ func decryptionRuleGroupSchema(isResource bool) map[string]*schema.Schema {
 					},
 					"target":        targetSchema(false),
 					"negate_target": negateTargetSchema(),
-					"audit_comment": auditCommentSchema(),
 				},
 			},
 		},
@@ -458,7 +458,7 @@ func loadDecryptionRules(d *schema.ResourceData) ([]decryption.Entry, map[string
 	list := make([]decryption.Entry, 0, len(rlist))
 	for i := range rlist {
 		x := rlist[i].(map[string]interface{})
-		auditComments[x["name"].(string)] = x["audit_comment"].(string)
+		auditComments[x["name"].(string)] = os.Getenv("PANOS_AUDIT_COMMENT")
 		list = append(list, decryption.Entry{
 			Name:                       x["name"].(string),
 			Description:                x["description"].(string),
@@ -523,7 +523,6 @@ func dumpDecryptionRule(o decryption.Entry) map[string]interface{} {
 		"log_successful_tls_handshakes": o.LogSuccessfulTlsHandshakes,
 		"log_failed_tls_handshakes":     o.LogFailedTlsHandshakes,
 		"log_setting":                   o.LogSetting,
-		"audit_comment":                 "",
 	}
 }
 

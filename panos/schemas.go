@@ -5,7 +5,8 @@ import (
 
 	"github.com/PaloAltoNetworks/pango/util"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func templateSchema(ts bool) *schema.Schema {
@@ -50,7 +51,7 @@ func positionKeywordSchema() *schema.Schema {
 		Type:         schema.TypeString,
 		Optional:     true,
 		Description:  "The position keyword for this group of rules",
-		ValidateFunc: validateStringIn(movementKeywords()...),
+		ValidateFunc: validation.StringInSlice(movementKeywords(), false),
 	}
 }
 
@@ -64,16 +65,12 @@ func positionReferenceSchema() *schema.Schema {
 
 func rulebaseSchema() *schema.Schema {
 	return &schema.Schema{
-		Type:        schema.TypeString,
-		ForceNew:    true,
-		Optional:    true,
-		Description: "The rulebase location.",
-		Default:     util.PreRulebase,
-		ValidateFunc: validateStringIn(
-			util.PreRulebase,
-			util.Rulebase,
-			util.PostRulebase,
-		),
+		Type:         schema.TypeString,
+		ForceNew:     true,
+		Optional:     true,
+		Description:  "The rulebase location.",
+		Default:      util.PreRulebase,
+		ValidateFunc: validation.StringInSlice([]string{util.PreRulebase, util.Rulebase, util.PostRulebase}, false),
 	}
 }
 
@@ -176,17 +173,6 @@ func saveListing(d *schema.ResourceData, v []string) {
 	d.Set("total", len(v))
 	if err := d.Set("listing", v); err != nil {
 		log.Printf("[WARN] Error setting 'listing' for %q: %s", d.Id(), err)
-	}
-}
-
-func auditCommentSchema() *schema.Schema {
-	return &schema.Schema{
-		Type:        schema.TypeString,
-		Description: "The audit comment.",
-		Optional:    true,
-		DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-			return true
-		},
 	}
 }
 

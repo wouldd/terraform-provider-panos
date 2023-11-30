@@ -3,6 +3,7 @@ package panos
 import (
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/PaloAltoNetworks/pango/poli/nat"
 	"github.com/PaloAltoNetworks/pango/util"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 // Data source (listing).
@@ -660,7 +661,6 @@ func natRuleGroupSchema(isResource bool, rmKeys []string) map[string]*schema.Sch
 					},
 					"target":        targetSchema(false),
 					"negate_target": negateTargetSchema(),
-					"audit_comment": auditCommentSchema(),
 				},
 			},
 		},
@@ -690,7 +690,7 @@ func loadNatRules(d *schema.ResourceData) ([]nat.Entry, map[string]string) {
 	list := make([]nat.Entry, 0, len(rlist))
 	for i := range rlist {
 		x := rlist[i].(map[string]interface{})
-		auditComments[x["name"].(string)] = x["audit_comment"].(string)
+		auditComments[x["name"].(string)] = os.Getenv("PANOS_AUDIT_COMMENT")
 		list = append(list, loadNatEntry(x))
 	}
 
@@ -800,7 +800,6 @@ func dumpNatRule(o nat.Entry) map[string]interface{} {
 		"negate_target": o.NegateTarget,
 		"uuid":          o.Uuid,
 		"group_tag":     o.GroupTag,
-		"audit_comment": "",
 	}
 
 	op := map[string]interface{}{

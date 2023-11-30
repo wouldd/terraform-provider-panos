@@ -1,8 +1,10 @@
 package panos
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -10,8 +12,9 @@ import (
 	"github.com/PaloAltoNetworks/pango"
 	"github.com/PaloAltoNetworks/pango/poli/security"
 	"github.com/PaloAltoNetworks/pango/util"
-
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 // Data source (listing).
@@ -22,13 +25,14 @@ func dataSourceSecurityRules() *schema.Resource {
 	s["rulebase"] = rulebaseSchema()
 
 	return &schema.Resource{
-		Read: dataSourceSecurityRulesRead,
+		ReadContext: dataSourceSecurityRulesRead,
 
 		Schema: s,
 	}
 }
 
-func dataSourceSecurityRulesRead(d *schema.ResourceData, meta interface{}) error {
+func dataSourceSecurityRulesRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 	var listing []string
 
@@ -50,24 +54,25 @@ func dataSourceSecurityRulesRead(d *schema.ResourceData, meta interface{}) error
 	}
 
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	d.SetId(id)
 	saveListing(d, listing)
-	return nil
+	return diags
 }
 
 // Data source.
 func dataSourceSecurityRule() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceSecurityRuleRead,
+		ReadContext: dataSourceSecurityRuleRead,
 
 		Schema: securityRuleSchema(false, 0, []string{"position_keyword", "position_reference"}),
 	}
 }
 
-func dataSourceSecurityRuleRead(d *schema.ResourceData, meta interface{}) error {
+func dataSourceSecurityRuleRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 	var o security.Entry
 
@@ -93,24 +98,24 @@ func dataSourceSecurityRuleRead(d *schema.ResourceData, meta interface{}) error 
 	if err != nil {
 		if isObjectNotFound(err) {
 			d.SetId("")
-			return nil
+			return diag.FromErr(err)
 		}
-		return err
+		return diag.FromErr(err)
 	}
 
 	d.SetId(id)
 	saveSecurityRules(d, []security.Entry{o})
 
-	return nil
+	return diags
 }
 
 // Resource (group).
 func resourceSecurityRuleGroup() *schema.Resource {
 	return &schema.Resource{
-		Create: createUpdateSecurityRuleGroup,
-		Read:   readSecurityRuleGroup,
-		Update: createUpdateSecurityRuleGroup,
-		Delete: deleteSecurityRuleGroup,
+		CreateContext: createUpdateSecurityRuleGroup,
+		ReadContext:   readSecurityRuleGroup,
+		UpdateContext: createUpdateSecurityRuleGroup,
+		DeleteContext: deleteSecurityRuleGroup,
 
 		SchemaVersion: 1,
 		StateUpgraders: []schema.StateUpgrader{
@@ -133,7 +138,7 @@ func resourceSecurityRuleGroup() *schema.Resource {
 	}
 }
 
-func securityRuleUpgradeV0(raw map[string]interface{}, meta interface{}) (map[string]interface{}, error) {
+func securityRuleUpgradeV0(ctx context.Context, raw map[string]interface{}, meta interface{}) (map[string]interface{}, error) {
 	if _, ok := raw["rulebase"]; !ok {
 		raw["rulebase"] = util.PreRulebase
 	}
@@ -149,10 +154,10 @@ func securityRuleUpgradeV0(raw map[string]interface{}, meta interface{}) (map[st
 
 func resourcePanoramaSecurityRuleGroup() *schema.Resource {
 	return &schema.Resource{
-		Create: createUpdateSecurityRuleGroup,
-		Read:   readSecurityRuleGroup,
-		Update: createUpdateSecurityRuleGroup,
-		Delete: deleteSecurityRuleGroup,
+		CreateContext: createUpdateSecurityRuleGroup,
+		ReadContext:   readSecurityRuleGroup,
+		UpdateContext: createUpdateSecurityRuleGroup,
+		DeleteContext: deleteSecurityRuleGroup,
 
 		SchemaVersion: 1,
 		StateUpgraders: []schema.StateUpgrader{
@@ -175,7 +180,8 @@ func resourcePanoramaSecurityRuleGroup() *schema.Resource {
 	}
 }
 
-func createUpdateSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
+func createUpdateSecurityRuleGroup(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 	var prevNames []string
 
@@ -187,7 +193,11 @@ func createUpdateSecurityRuleGroup(d *schema.ResourceData, meta interface{}) err
 	rules, auditComments := loadSecurityRules(d)
 
 	if !movementIsRelative(move) && oRule != "" {
-		return fmt.Errorf("'position_reference' must be empty for non-relative movement")
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "'position_reference' must be empty for non-relative movement",
+		})
+		return diags
 	}
 
 	d.Set("position_keyword", movementItoa(move))
@@ -202,6 +212,12 @@ func createUpdateSecurityRuleGroup(d *schema.ResourceData, meta interface{}) err
 
 	id := buildSecurityRuleGroupId(dg, base, vsys, move, oRule, rules)
 
+	diags = append(diags, diag.Diagnostic{
+		Severity: diag.Warning,
+		Summary:  "Updating security group rules with audit comments",
+		Detail:   fmt.Sprintf("This is a the current audit comments %s, ", auditComments),
+	})
+
 	switch con := meta.(type) {
 	case *pango.Firewall:
 		err = con.Policies.Security.ConfigureRules(vsys, rules, auditComments, false, move, oRule, prevNames)
@@ -210,14 +226,16 @@ func createUpdateSecurityRuleGroup(d *schema.ResourceData, meta interface{}) err
 	}
 
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	d.SetId(id)
-	return readSecurityRuleGroup(d, meta)
+	readSecurityRuleGroup(ctx, d, meta)
+	return diags
 }
 
-func readSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
+func readSecurityRuleGroup(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 	var listing []security.Entry
 
@@ -232,7 +250,11 @@ func readSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
 			tok[0], tok[1], "vsys1", tok[2], tok[3], tok[4],
 		}, IdSeparator))
 	} else if len(tok) != 6 {
-		return fmt.Errorf("Invalid ID len(%d) encountered: %s", len(tok), d.Id())
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  fmt.Sprintf("Invalid ID len(%d) encountered: %s", len(tok), d.Id()),
+		})
+		return diags
 	}
 
 	dg, base, vsys, move, oRule, names := parseSecurityRuleGroupId(d.Id())
@@ -246,7 +268,7 @@ func readSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
 
 	if err != nil {
 		d.SetId("")
-		return nil
+		return diag.FromErr(err)
 	}
 
 	fIdx, oIdx := -1, -1
@@ -267,7 +289,11 @@ func readSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
 		d.Set("rule", nil)
 		return nil
 	} else if oIdx == -1 && movementIsRelative(move) {
-		return fmt.Errorf("Can't position group %s %q: rule is not present", movementItoa(move), oRule)
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  fmt.Sprintf("Can't position group %s %q: rule is not present", movementItoa(move), oRule),
+		})
+		return diags
 	} else if move == util.MoveTop && fIdx != 0 {
 		d.Set("position_keyword", "")
 	}
@@ -285,11 +311,17 @@ func readSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
 		d.Set("position_keyword", "")
 	}
 	saveSecurityRules(d, dlist)
+	diags = append(diags, diag.Diagnostic{
+		Severity: diag.Warning,
+		Summary:  "These changes will be commited with the following audit comment",
+		Detail:   "Audit comment:, " + os.Getenv("PANOS_AUDIT_COMMENT"),
+	})
 
-	return nil
+	return diags
 }
 
-func deleteSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
+func deleteSecurityRuleGroup(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 
 	dg, base, vsys, _, _, names := parseSecurityRuleGroupId(d.Id())
@@ -307,20 +339,20 @@ func deleteSecurityRuleGroup(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	if err != nil && !isObjectNotFound(err) {
-		return err
+		return diag.FromErr(err)
 	}
 
 	d.SetId("")
-	return nil
+	return diags
 }
 
 // Resource (policy).
 func resourceSecurityPolicy() *schema.Resource {
 	return &schema.Resource{
-		Create: createUpdateSecurityPolicy,
-		Read:   readSecurityPolicy,
-		Update: createUpdateSecurityPolicy,
-		Delete: deleteSecurityPolicy,
+		CreateContext: createUpdateSecurityPolicy,
+		ReadContext:   readSecurityPolicy,
+		UpdateContext: createUpdateSecurityPolicy,
+		DeleteContext: deleteSecurityPolicy,
 
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
@@ -349,10 +381,10 @@ func resourceSecurityPolicy() *schema.Resource {
 
 func resourcePanoramaSecurityPolicy() *schema.Resource {
 	return &schema.Resource{
-		Create: createUpdateSecurityPolicy,
-		Read:   readSecurityPolicy,
-		Update: createUpdateSecurityPolicy,
-		Delete: deleteSecurityPolicy,
+		CreateContext: createUpdateSecurityPolicy,
+		ReadContext:   readSecurityPolicy,
+		UpdateContext: createUpdateSecurityPolicy,
+		DeleteContext: deleteSecurityPolicy,
 
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
@@ -379,7 +411,8 @@ func resourcePanoramaSecurityPolicy() *schema.Resource {
 	}
 }
 
-func createUpdateSecurityPolicy(d *schema.ResourceData, meta interface{}) error {
+func createUpdateSecurityPolicy(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 
 	dg := d.Get("device_group").(string)
@@ -393,6 +426,12 @@ func createUpdateSecurityPolicy(d *schema.ResourceData, meta interface{}) error 
 
 	id := buildSecurityPolicyId(dg, base, vsys)
 
+	diags = append(diags, diag.Diagnostic{
+		Severity: diag.Warning,
+		Summary:  "Security Policies to be updated with audit comments",
+		Detail:   fmt.Sprintf("This is a the current audit comments %s, ", auditComments),
+	})
+
 	switch con := meta.(type) {
 	case *pango.Firewall:
 		err = con.Policies.Security.ConfigureRules(vsys, rules, auditComments, true, util.MoveTop, "", nil)
@@ -401,14 +440,16 @@ func createUpdateSecurityPolicy(d *schema.ResourceData, meta interface{}) error 
 	}
 
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	d.SetId(id)
-	return readSecurityPolicy(d, meta)
+
+	return readSecurityPolicy(ctx, d, meta)
 }
 
-func readSecurityPolicy(d *schema.ResourceData, meta interface{}) error {
+func readSecurityPolicy(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 	var listing []security.Entry
 
@@ -428,7 +469,7 @@ func readSecurityPolicy(d *schema.ResourceData, meta interface{}) error {
 	} else if len(tok) != 3 {
 		// Some random incorrect format..?
 		d.SetId("")
-		return nil
+		return diags
 	}
 
 	dg, base, vsys := parseSecurityPolicyId(d.Id())
@@ -443,17 +484,17 @@ func readSecurityPolicy(d *schema.ResourceData, meta interface{}) error {
 	if err != nil {
 		if isObjectNotFound(err) {
 			d.SetId("")
-			return nil
 		}
-		return err
+		return diag.FromErr(err)
 	}
 
 	saveSecurityRules(d, listing)
 
-	return nil
+	return diags
 }
 
-func deleteSecurityPolicy(d *schema.ResourceData, meta interface{}) error {
+func deleteSecurityPolicy(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
 	var err error
 
 	dg, base, vsys := parseSecurityPolicyId(d.Id())
@@ -466,11 +507,11 @@ func deleteSecurityPolicy(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	if err != nil && !isObjectNotFound(err) {
-		return err
+		return diag.FromErr(err)
 	}
 
 	d.SetId("")
-	return nil
+	return diags
 }
 
 // Schema handling.
@@ -504,7 +545,7 @@ func securityRuleSchema(isResource bool, ruleMin int, rmKeys []string) map[strin
 						Description:  "Rule type.",
 						Optional:     true,
 						Default:      "universal",
-						ValidateFunc: validateStringIn("universal", "interzone", "intrazone"),
+						ValidateFunc: validation.StringInSlice([]string{"universal", "interzone", "intrazone"}, false),
 					},
 					"description": {
 						Type:        schema.TypeString,
@@ -598,7 +639,7 @@ func securityRuleSchema(isResource bool, ruleMin int, rmKeys []string) map[strin
 						Type:         schema.TypeString,
 						Optional:     true,
 						Default:      "allow",
-						ValidateFunc: validateStringIn("allow", "deny", "drop", "reset-client", "reset-server", "reset-both"),
+						ValidateFunc: validation.StringInSlice([]string{"allow", "deny", "drop", "reset-client", "reset-server", "reset-both"}, false),
 					},
 					"log_setting": {
 						Type:     schema.TypeString,
@@ -678,7 +719,6 @@ func securityRuleSchema(isResource bool, ruleMin int, rmKeys []string) map[strin
 					},
 					"target":        targetSchema(false),
 					"negate_target": negateTargetSchema(),
-					"audit_comment": auditCommentSchema(),
 				},
 			},
 		},
@@ -705,7 +745,7 @@ func loadSecurityRules(d *schema.ResourceData) ([]security.Entry, map[string]str
 	ans := make([]security.Entry, 0, len(rlist))
 	for i := range rlist {
 		elm := rlist[i].(map[string]interface{})
-		auditComments[elm["name"].(string)] = elm["audit_comment"].(string)
+		auditComments[elm["name"].(string)] = os.Getenv("PANOS_AUDIT_COMMENT")
 		ans = append(ans, security.Entry{
 			Name:                            elm["name"].(string),
 			Type:                            elm["type"].(string),
@@ -795,7 +835,6 @@ func saveSecurityRules(d *schema.ResourceData, rules []security.Entry) {
 			"destination_devices":                listAsSet(x.DestinationDevices),
 			"target":                             dumpTarget(x.Targets),
 			"negate_target":                      x.NegateTarget,
-			"audit_comment":                      "",
 		})
 	}
 
